@@ -46,3 +46,25 @@ line by line (i.e. ~startsWith~ for ~*~, ~:~ and the like), but
 decided to got the lexer + parser combination route after all. Should
 make it hopefully easier to add more advanced Org features in the
 future, if desired.
+
+** Why?
+
+I wrote it because I use Org files to store all sorts of data. The
+other day I thought I would change how I produce my CVs. Up to now I'm
+still using Europass (https://europass.europa.eu/en), but I'm a bit
+annoyed having to use an extremely slow web interface.
+
+In the past I produced my CV using a custom LaTeX template, so I
+thought why not go back to that kind of approach. But as a heavy Org
+user nowadays, I felt like I'd want to store the actual *content* of
+my CV in an Org file.
+
+So the idea was born to:
+- Org file with CV data
+- Org file parser in Nim
+- CV generator in Nim
+
+The latter will be a simple API to stitch together all the desired
+fields for a CV I want to produce. Then it will fill a LaTeX template
+for one of the popular CV LaTeX templates (altacv, moderncv) and we're
+done.

@@ -1,0 +1,48 @@
+* ~orgparser~ - A basic parser for Emacs Org mode files
+
+This parser can parse basic Org mode files.
+
+Parses Org files into a structure of ~seq[OrgNode]~ where an ~OrgNode~
+can be:
+#+begin_src nim
+type
+  OrgObj* = object
+    case kind*: OrgNodeKind
+    of ogText:
+      text*: string
+    of ogSection:
+      sec*: Section # `* Foo \n some text \n` until next section
+    of ogPropertyList:
+      propList*: PropertyList # `:PROPERTIES:\n multiple ogProperty\n:END:`
+    of ogProperty:
+      prop*: Property # `:Foo: Bar`
+    of ogBold, ogUnderlined, ogMonospace:
+      emph*: string
+    of ogLink:
+      link*: Link # `[[https://...][foo]]`
+    of ogPropertyStart, ogPropertyEnd: discard # no fields needed
+  OrgNode* = ref OrgObj
+
+  Property* = object
+    key*: string
+    value*: seq[OrgNode]
+
+  PropertyList* = seq[Property]
+
+  Link* = object
+    link*: string
+    desc*: string
+
+  Section* = object
+    title*: seq[OrgNode]
+    level*: int # The section level (number of `*`)
+    body*: seq[OrgNode]
+#+end_src
+
+** Note on implementation
+
+I first just wanted to start with a super simple parser that works
+line by line (i.e. ~startsWith~ for ~*~, ~:~ and the like), but
+decided to got the lexer + parser combination route after all. Should
+make it hopefully easier to add more advanced Org features in the
+future, if desired.

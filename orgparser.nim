@@ -30,6 +30,46 @@ type
     kind*: TokenKind
     value*: string
 
+proc tokenize*(org: string): seq[Token] =
+  var i = 0
+  var lastWasOp = false
+  template addToken(tk): untyped =
+    if buf.len > 0:
+      result.add Token(kind: tkText, value: buf)
+      buf.setLen(0)
+      doAssert identBuf.len == 0, "Ident buffer not empty! `" & $identBuf & "`"
+    elif identBuf.len > 0: # found identifier between two operators
+      result.add Token(kind: tkIdent, value: identBuf)
+      identBuf.setLen(0)
+      doAssert buf.len == 0, "Buffer was not empty! " & $buf
+    result.add Token(kind: tk)
+    lastWasOp = true
+  var buf = newStringOfCap(128_000)
+  var identBuf = newStringOfCap(512)
+  while i < org.len:
+    case org[i]
+    of '*': addToken tkStar
+    of '[': addToken tkBracketOpen
+    of ']': addToken tkBracketClose
+    of '_': addToken tkUnderscore
+    of '=': addToken tkEqual
+    of '~': addToken tkTilde
+    of ':': addToken tkColon
+    of '\n': addToken tkNewline
+    of ' ':
+      if identBuf.len > 0: # not an identifier after all, add to buf, reset
+        buf.add identBuf
+        identBuf.setLen(0)
+      buf.add org[i]
+      lastWasOp = false
+    else:
+      if lastWasOp:
+        identBuf.add org[i]
+      else:
+        buf.add org[i]
+    inc i
+
+type
   OrgObj* = object
     case kind*: OrgNodeKind
     of ogText:

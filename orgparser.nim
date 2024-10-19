@@ -267,12 +267,18 @@ proc sectionUpcoming(tokens: seq[Token]): bool =
   result = true
 
 proc determineSectionLevel(t: Token, tokens: seq[Token]): int =
-  if t.kind == tkStar:
+  ## Determines the level of the next section. It _must_ be a section.
+  ## An optional newline as the next token is allowed.
+  if t.kind == tkNewline:
+    result = 0
+  elif t.kind == tkStar:
     result = 1
-    var i = tokens.high
-    while i > 0 and tokens[i].kind == tkStar:
-      inc result
-      dec i
+  else:
+    raiseAssert "Invalid argument to `determineSectionLevel`, not a section: " & $t
+  var i = tokens.high
+  while i > 0 and tokens[i].kind == tkStar:
+    inc result
+    dec i
 
 proc parseTitle(t: Token, tokens: var seq[Token]): seq[OrgNode] =
   ## Parses a title from a section. Must only be called if `t` is not an
@@ -295,9 +301,14 @@ proc parseOperatorOrSection(t: Token, tokens: var seq[Token]): OrgNode =
     else: # should be a section
       var body: seq[OrgNode]
       let title = parseTitle(tn, tokens)
-      while tokens.len > 0 and not sectionUpcoming(tokens):
+      while tokens.len > 0: #  and not sectionUpcoming(tokens):
         let tn = tokens.pop()
+        if sectionUpcoming(tokens) and
+           determineSectionLevel(tn, tokens) <= level: # break if not lower than this section's level
+          break
         body.add tn.parseToken(tokens)
+      if tokens.tryPeek().kind == tkNewline: # consume the possible newline into this body
+        let tn = tokens.pop(); body.add tn.parseToken(tokens)
       result = OrgNode(kind: ogSection, sec: Section(title: title, level: level, body: body))
   elif tokens.len == 1: # `* FooEOF`
     let tn = tokens.pop()

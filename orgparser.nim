@@ -1,4 +1,4 @@
-import std/[strutils, sequtils, tables, options, algorithm, strformat]
+import std/[strutils, sequtils, tables, options, algorithm, strformat, options]
 
 type
   TokenKind* = enum
@@ -15,6 +15,7 @@ type
     tkIdent  # single word e.g. between `*foo*`, `=bar=`, ...
 
   OrgNodeKind* = enum
+    ogNone, # empty node
     ogSection, # `* Foo \n some text \n` until next section
     ogProperty, # `:Foo: Bar`
     ogPropertyStart, # `:PROPERTIES:` Wont appear in final `OrgNode` object, only for parsing
@@ -31,6 +32,40 @@ type
     value*: string
     line*: int
     column*: int
+
+  OrgObj* = object
+    case kind*: OrgNodeKind
+    of ogText:
+      text*: string
+    of ogSection:
+      sec*: Section # `* Foo \n some text \n` until next section
+    of ogPropertyList:
+      propList*: PropertyList # `:PROPERTIES:\n multiple ogProperty\n:END:`
+    of ogProperty:
+      prop*: Property # `:Foo: Bar`
+    of ogBold, ogUnderlined, ogMonospace:
+      emph*: string
+    of ogLink:
+      link*: Link # `[[https://...][foo]]`
+    of ogPropertyStart, ogPropertyEnd, ogNone: discard # no fields needed
+  OrgNode* = ref OrgObj
+
+  Property* = object
+    key*: string
+    value*: seq[OrgNode]
+
+  PropertyList* = seq[Property]
+
+  Link* = object
+    link*: string
+    desc*: string
+
+  Section* = object
+    title*: seq[OrgNode]
+    level*: int # The section level (number of `*`)
+    body*: seq[OrgNode]
+
+  OrgDocument* = seq[OrgNode]
 
 proc tokenize*(org: string): seq[Token] =
   var i = 0
@@ -51,13 +86,18 @@ proc tokenize*(org: string): seq[Token] =
   var identBuf = newStringOfCap(512)
   while i < org.len:
     case org[i]
-    of '*': addToken tkStar
-    of '[': addToken tkBracketOpen
-    of ']': addToken tkBracketClose
-    of '_': addToken tkUnderscore
-    of '=': addToken tkEqual
-    of '~': addToken tkTilde
-    of ':': addToken tkColon
+    of '*':  addToken tkStar
+    of '[':  addToken tkBracketOpen
+    of ']':  addToken tkBracketClose
+    of '=':  addToken tkEqual
+    of '~':  addToken tkTilde
+    of ':':  addToken tkColon
+    of '_':
+      if identBuf.len > 0 and i < org.len - 1 and org[i+1] notin {'*','[',']','=','~',':',' ','\n'}:
+        # just a regular underscore in an identifier, e.g. `CUSTOM_ID`
+        identBuf.add org[i]
+      else:
+        addToken tkUnderscore
     of '\n': addToken tkNewline; inc line; col = 0
     of ' ':
       if identBuf.len > 0: # not an identifier after all, add to buf, reset
@@ -72,39 +112,6 @@ proc tokenize*(org: string): seq[Token] =
         buf.add org[i]
     inc i
     inc col
-
-type
-  OrgObj* = object
-    case kind*: OrgNodeKind
-    of ogText:
-      text*: string
-    of ogSection:
-      sec*: Section # `* Foo \n some text \n` until next section
-    of ogPropertyList:
-      propList*: PropertyList # `:PROPERTIES:\n multiple ogProperty\n:END:`
-    of ogProperty:
-      prop*: Property # `:Foo: Bar`
-    of ogBold, ogUnderlined, ogMonospace:
-      emph*: string
-    of ogLink:
-      link*: Link # `[[https://...][foo]]`
-    of ogPropertyStart, ogPropertyEnd: discard # no fields needed
-  OrgNode* = ref OrgObj
-
-  Property* = object
-    key*: string
-    value*: seq[OrgNode]
-
-  PropertyList* = seq[Property]
-
-  Link* = object
-    link*: string
-    desc*: string
-
-  Section* = object
-    title*: seq[OrgNode]
-    level*: int # The section level (number of `*`)
-    body*: seq[OrgNode]
 
 proc parseToken*(token: Token, tokens: var seq[Token]): OrgNode
 func tryPop(tokens: var seq[Token]): Token =
@@ -129,31 +136,32 @@ func serialize(t: Token): string =
   of tkIdent: result = t.value
   of tkNone: result = ""
 
-func `$`(t: Token): string = t.serialize()
-func `$`(org: OrgNode): string
-func `$`(org: seq[OrgNode]): string
+func `$`*(t: Token): string = t.serialize()
+func `$`*(org: OrgNode): string
+func `$`*(org: seq[OrgNode] | OrgDocument): string
 
-proc `$`(uri: Link): string =
+proc `$`*(uri: Link): string =
   result = &"[[{uri.link}]"
   if uri.desc.len > 0:
     result.add &"[uri.desc]]"
   else:
     result.add "]"
 
-proc `$`(p: Property): string =
-  result = &":{p.key}:{p.value}"
+proc `$`*(p: Property): string =
+  result = &":{p.key}: {p.value}"
 
-proc `$`(pList: PropertyList): string =
+proc `$`*(pList: PropertyList): string =
   result = ":PROPERTIES:\n"
   for p in pList:
-    result.add $p
+    result.add $p & "\n"
   result.add ":END:\n"
 
 proc serialize(org: OrgNode): string =
+  if org.isNil: return "OrgNode(nil)"
   case org.kind
   of ogSection:
-    result = repeat('*', org.sec.level)
-    result.add $org.sec.title
+    result = repeat('*', org.sec.level) & " "
+    result.add $org.sec.title & "\n"
     result.add $org.sec.body
   of ogProperty:      result = $org.prop
   of ogPropertyStart: result = ":PROPERTIES:"
@@ -164,9 +172,10 @@ proc serialize(org: OrgNode): string =
   of ogLink:          result = $org.link
   of ogMonospace:     result = &"~{org.emph}~"
   of ogText:          result = org.text
+  of ogNone: discard
 
-func `$`(org: OrgNode): string = serialize(org)
-func `$`(org: seq[OrgNode]): string =
+func `$`*(org: OrgNode): string = serialize(org)
+func `$`*(org: seq[OrgNode] | OrgDocument): string =
   for x in org:
     result.add serialize(x)
 
@@ -187,6 +196,23 @@ proc tryParseOperator(t: Token, tokens: var seq[Token], tkKind: TokenKind, ogKin
     result = OrgNode(kind: ogKind, emph: val)
   else:
     result = OrgNode(kind: ogText, text: val)
+
+proc stripFirstSpace(org: OrgNode): OrgNode =
+  doAssert org.kind == ogText
+  result = org
+  result.text = result.text.strip(leading = true)
+
+template addMaybeStrip(s, tok, tokens, first: untyped): untyped =
+  ## Parses the token, strips potential whitespace at the beginning (if `first`) and
+  ## strip newlines at the very, if the token was a newline.
+  ##
+  ## Used for the `title` of a Section and the value of a Property.
+  var node = parseToken(tok, tokens)
+  if first:
+    node = node.stripFirstSpace()
+    first = false
+  if tok.kind != tkNewline:
+    s.add node
 
 proc tryParseProperty(t: Token, tokens: var seq[Token]): OrgNode =
   ## Parses either a property or a full property list
@@ -210,12 +236,10 @@ proc tryParseProperty(t: Token, tokens: var seq[Token]): OrgNode =
   elif success: # parse individual property
     var tok = Token(kind: tkNone) #  = tokens.tryPop()
     var val: seq[OrgNode]
-    var j = tokens.high
-    for i in 0 ..< 5:
-      dec j
+    var first = true # to strip the first whitespace
     while tokens.len > 0 and tok.kind != tkNewline:
       tok = tokens.pop()
-      val.add parseToken(tok, tokens)
+      val.addMaybeStrip(tok, tokens, first)
     result = OrgNode(kind: ogProperty, prop: Property(key: key, value: val))
   else: # neither, just a colon
     result = OrgNode(kind: ogText, text: $t & key)
@@ -291,10 +315,12 @@ proc parseTitle(t: Token, tokens: var seq[Token]): seq[OrgNode] =
   if t.kind == tkNewline: return
   else:
     var tok: Token
+    var first = true # to strip the first space after `*`
     while tokens.len > 0 and tok.kind != tkNewline: # every token to next newline is part of the title
       tok = tokens.pop()
       if tok.kind == tkStar: continue # skip, already taken into account by `determineSectionLevel`
-      result.add tok.parseToken(tokens)
+      var node = tok.parseToken(tokens)
+      result.addMaybeStrip(tok, tokens, first)
 
 proc parseOperatorOrSection(t: Token, tokens: var seq[Token]): OrgNode =
   let level = determineSectionLevel(t, tokens)
@@ -340,9 +366,12 @@ proc parse*(tokens: seq[Token]): seq[OrgNode] =
   var tokens = tokens.reversed()
   while tokens.len > 0:
     let t = tokens.pop()
-    echo "Got token: ", t
     ## XXX: concat two text nodes if they appear after another!
     result.add t.parseToken(tokens)
+
+proc parseOrg*(fname: string): OrgDocument =
+  ## Parser an Org file from a given filename.
+  result = readFile(fname).tokenize.parse
 
 iterator subsections*(org: OrgNode): OrgNode =
   ## Yields all subsections in the given org section `org`.

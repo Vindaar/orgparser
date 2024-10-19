@@ -381,6 +381,49 @@ iterator subsections*(org: OrgNode): OrgNode =
     of ogSection: yield ch
     else: continue
 
+iterator body*(org: OrgNode): OrgNode =
+  ## Iterates over the body of the org section
+  if org.kind != ogSection:
+    raise newException(ValueError, "The argument is not a section, but a " & $org.kind)
+  for el in org.sec.body:
+    yield el
+
+proc propertyList*(org: OrgNode): PropertyList =
+  ## Returns the property list of the given section, if any.
+  if org.kind != ogSection: return
+  for el in body(org):
+    if el.kind == ogPropertyList:
+      result = el.propList
+
+proc getProperty*(x: PropertyList, key: string): Option[Property] =
+  ## Returns the propery with the given `key`.
+  for el in x:
+    if el.key == key: return some(el)
+
+proc findSection*(org: OrgDocument, sec: string): OrgNode =
+  ## Returns the section with name `sec` or `:CUSTOM_ID: sec`.
+  ## A custom ID always matches at higher priority. If you have multiple
+  ## ids / titles with the same name, we return the first (that is not
+  ## intended usage).
+  proc findSecImpl(x: OrgNode): OrgNode =
+    ## Returns either a `ogSection` matching `sec` or returns an empty
+    ## node.
+    doAssert x.kind == ogSection
+    let pList = propertyList(x)
+    let pCustom = getProperty(pList, "CUSTOM_ID")
+    if pCustom.isSome and $pCustom.unsafeGet.value == sec: return x
+    elif $x.sec.title == sec: return x
+    else: # check subsections
+      for el in subsections(x):
+        let res = findSecImpl(el)
+        if res.kind == ogSection: return res
+    result = OrgNode(kind: ogNone)
+
+  for el in org:
+    if el.kind == ogSection:
+      let s = findSecImpl(el)
+      if s.kind == ogSection: return s
+
 when isMainModule:
   const path = "/home/basti/org/Documents/CV_data.org"
   let data = readFile(path)

@@ -29,20 +29,23 @@ type
   Token* = object
     kind*: TokenKind
     value*: string
+    line*: int
+    column*: int
 
 proc tokenize*(org: string): seq[Token] =
   var i = 0
   var lastWasOp = false
+  var line, col = 1
   template addToken(tk): untyped =
     if buf.len > 0:
-      result.add Token(kind: tkText, value: buf)
+      result.add Token(kind: tkText, value: buf, line: line, column: col)
       buf.setLen(0)
       doAssert identBuf.len == 0, "Ident buffer not empty! `" & $identBuf & "`"
     elif identBuf.len > 0: # found identifier between two operators
-      result.add Token(kind: tkIdent, value: identBuf)
+      result.add Token(kind: tkIdent, value: identBuf, line: line, column: col)
       identBuf.setLen(0)
       doAssert buf.len == 0, "Buffer was not empty! " & $buf
-    result.add Token(kind: tk)
+    result.add Token(kind: tk, line: line, column: col)
     lastWasOp = true
   var buf = newStringOfCap(128_000)
   var identBuf = newStringOfCap(512)
@@ -55,7 +58,7 @@ proc tokenize*(org: string): seq[Token] =
     of '=': addToken tkEqual
     of '~': addToken tkTilde
     of ':': addToken tkColon
-    of '\n': addToken tkNewline
+    of '\n': addToken tkNewline; inc line; col = 0
     of ' ':
       if identBuf.len > 0: # not an identifier after all, add to buf, reset
         buf.add identBuf
@@ -68,6 +71,7 @@ proc tokenize*(org: string): seq[Token] =
       else:
         buf.add org[i]
     inc i
+    inc col
 
 type
   OrgObj* = object

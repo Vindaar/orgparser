@@ -308,19 +308,33 @@ proc sectionUpcoming(tokens: seq[Token]): bool =
   dec i
   result = true
 
-proc determineSectionLevel(t: Token, tokens: seq[Token]): int =
+proc skipNewlines(tokens: seq[Token]): int =
+  result = tokens.high
+  while result > 0 and tokens[result].kind == tkNewline:
+    dec result
+
+proc printTokens(t: seq[Token], num: int) =
+  var idx = t.high
+  for i in 0 ..< num:
+    if idx >= 0:
+      echo "Token: ", t[idx]
+    dec idx
+
+proc determineSectionLevel(tokens: seq[Token], t = Token(kind: tkNone)): int =
   ## Determines the level of the next section. It _must_ be a section.
   ## An optional newline as the next token is allowed.
-  if t.kind == tkNewline:
+  if t.kind in {tkNewline, tkNone}:
     result = 0
   elif t.kind == tkStar:
     result = 1
   else:
     raiseAssert "Invalid argument to `determineSectionLevel`, not a section: " & $t
-  var i = tokens.high
+  var i = skipNewlines(tokens)
   while i > 0 and tokens[i].kind == tkStar:
     inc result
     dec i
+  echo "Result for: ", result
+  printTokens(tokens, 5)
 
 proc parseTitle(t: Token, tokens: var seq[Token]): OrgNode =
   ## Parses a title from a section. Must only be called if `t` is not an
@@ -338,29 +352,22 @@ proc parseTitle(t: Token, tokens: var seq[Token]): OrgNode =
       result.addMaybeStrip(tok, tokens, first)
 
 proc parseOperatorOrSection(t: Token, tokens: var seq[Token]): OrgNode =
-  let level = determineSectionLevel(t, tokens)
-  if tokens.len >= 2:
-    let tn = tokens[^1] # only peek!
-    if tn.kind == tkIdent: # should be an operator
-      result = tryParseOperator(t, tokens, tkStar, ogBold)
-    else: # should be a section
-      var body = newOrgArray()
-      let title = parseTitle(tn, tokens)
-      while tokens.len > 0: #  and not sectionUpcoming(tokens):
-        let tn = tokens.pop()
-        if sectionUpcoming(tokens) and
-           determineSectionLevel(tn, tokens) <= level: # break if not lower than this section's level
-          break
-        body.add tn.parseToken(tokens)
-      if tokens.tryPeek().kind == tkNewline: # consume the possible newline into this body
-        let tn = tokens.pop(); body.add tn.parseToken(tokens)
-      result = OrgNode(kind: ogSection, sec: Section(title: title, level: level, body: body))
-  elif tokens.len == 1: # `* FooEOF`
-    let tn = tokens.pop()
+  let level = determineSectionLevel(tokens, t)
+  let tn = tokens.tryPeek() # only peek!
+  if tn.kind == tkIdent: # should be an operator
+    result = tryParseOperator(t, tokens, tkStar, ogBold)
+  else: # should be a section
+    var body = newOrgArray()
     let title = parseTitle(tn, tokens)
-    result = OrgNode(kind: ogSection, sec: Section(title: title, level: level))
-  else:
-    raiseAssert "Invalid branch"
+    writeStackTrace()
+    while tokens.len > 0:
+      if sectionUpcoming(tokens):
+        let nextLevel = determineSectionLevel(tokens)
+        if nextLevel <= level:
+          break # exit if we've reached a section of the same or higher level
+      let tn = tokens.pop()
+      body.add tn.parseToken(tokens)
+    result = OrgNode(kind: ogSection, sec: Section(title: title, level: level, body: body))
 
 proc parseToken*(token: Token, tokens: var seq[Token]): OrgNode =
   case token.kind
@@ -438,7 +445,7 @@ proc findSection*(org: OrgNode, sec: string): OrgNode =
       for el in subsections(x):
         let res = findSecImpl(el)
         if res.kind == ogSection: return res
-    result = OrgNode(kind: ogNone)
+    result = newOrgEmpty()
 
   for el in org:
     if el.kind == ogSection:

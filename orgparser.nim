@@ -16,6 +16,7 @@ type
 
   OrgNodeKind* = enum
     ogNone, # empty node
+    ogArray, # just a seq of successive nodes, e.g. text with syntax highlighting or similar
     ogSection, # `* Foo \n some text \n` until next section
     ogProperty, # `:Foo: Bar`
     ogPropertyStart, # `:PROPERTIES:` Wont appear in final `OrgNode` object, only for parsing
@@ -35,6 +36,8 @@ type
 
   OrgObj* = object
     case kind*: OrgNodeKind
+    of ogArray:
+      children*: seq[OrgNode]
     of ogText:
       text*: string
     of ogSection:
@@ -52,7 +55,7 @@ type
 
   Property* = object
     key*: string
-    value*: seq[OrgNode]
+    value*: OrgNode
 
   PropertyList* = seq[Property]
 
@@ -61,11 +64,23 @@ type
     desc*: string
 
   Section* = object
-    title*: seq[OrgNode]
+    title*: OrgNode
     level*: int # The section level (number of `*`)
-    body*: seq[OrgNode]
+    body*: OrgNode
 
-  OrgDocument* = seq[OrgNode]
+proc newOrgEmpty*(): OrgNode = OrgNode(kind: ogNone )
+proc newOrgArray*(): OrgNode = OrgNode(kind: ogArray)
+
+proc add*(org: OrgNode, val: OrgNode) =
+  ## Adds the `val` to the `OrgNode` of kind `ogArray`
+  doAssert org.kind == ogArray, "Must be an array, but is: " & $org.kind
+  org.children.add val
+
+iterator items*(org: OrgNode): OrgNode =
+  ## Yields all elements in the given Org array
+  doAssert org.kind == ogArray, "Must be an array, but is: " & $org.kind
+  for el in org.children:
+    yield el
 
 proc tokenize*(org: string): seq[Token] =
   var i = 0
@@ -138,7 +153,6 @@ func serialize(t: Token): string =
 
 func `$`*(t: Token): string = t.serialize()
 func `$`*(org: OrgNode): string
-func `$`*(org: seq[OrgNode] | OrgDocument): string
 
 proc `$`*(uri: Link): string =
   result = &"[[{uri.link}]"
@@ -159,6 +173,9 @@ proc `$`*(pList: PropertyList): string =
 proc serialize(org: OrgNode): string =
   if org.isNil: return "OrgNode(nil)"
   case org.kind
+  of ogArray:
+    for x in org.children:
+      result.add serialize(x)
   of ogSection:
     result = repeat('*', org.sec.level) & " "
     result.add $org.sec.title & "\n"
@@ -175,9 +192,6 @@ proc serialize(org: OrgNode): string =
   of ogNone: discard
 
 func `$`*(org: OrgNode): string = serialize(org)
-func `$`*(org: seq[OrgNode] | OrgDocument): string =
-  for x in org:
-    result.add serialize(x)
 
 proc tryParseOperator(t: Token, tokens: var seq[Token], tkKind: TokenKind): (bool, string) =
   doAssert t.kind == tkKind, "No: " & $t
@@ -235,7 +249,7 @@ proc tryParseProperty(t: Token, tokens: var seq[Token]): OrgNode =
     result = OrgNode(kind: ogPropertyEnd)
   elif success: # parse individual property
     var tok = Token(kind: tkNone) #  = tokens.tryPop()
-    var val: seq[OrgNode]
+    var val = newOrgArray()
     var first = true # to strip the first whitespace
     while tokens.len > 0 and tok.kind != tkNewline:
       tok = tokens.pop()
@@ -308,12 +322,13 @@ proc determineSectionLevel(t: Token, tokens: seq[Token]): int =
     inc result
     dec i
 
-proc parseTitle(t: Token, tokens: var seq[Token]): seq[OrgNode] =
+proc parseTitle(t: Token, tokens: var seq[Token]): OrgNode =
   ## Parses a title from a section. Must only be called if `t` is not an
   ## ident and the previous token is a `tkStar`.
   doAssert t.kind != tkIdent, "Ident cannot be valid title" & $t
-  if t.kind == tkNewline: return
+  if t.kind == tkNewline: return newOrgEmpty()
   else:
+    result = newOrgArray()
     var tok: Token
     var first = true # to strip the first space after `*`
     while tokens.len > 0 and tok.kind != tkNewline: # every token to next newline is part of the title
@@ -329,7 +344,7 @@ proc parseOperatorOrSection(t: Token, tokens: var seq[Token]): OrgNode =
     if tn.kind == tkIdent: # should be an operator
       result = tryParseOperator(t, tokens, tkStar, ogBold)
     else: # should be a section
-      var body: seq[OrgNode]
+      var body = newOrgArray()
       let title = parseTitle(tn, tokens)
       while tokens.len > 0: #  and not sectionUpcoming(tokens):
         let tn = tokens.pop()
@@ -361,25 +376,18 @@ proc parseToken*(token: Token, tokens: var seq[Token]): OrgNode =
   of tkIdent: result = OrgNode(kind: ogText, text: token.value) #raiseAssert "Ident: " & $token # single word e.g. between `*foo*`, `=bar=`, ...
   of tkNone: raiseAssert "Not possible"
 
-proc parse*(tokens: seq[Token]): seq[OrgNode] =
+proc parse*(tokens: seq[Token]): OrgNode =
   ## `Tokens` is in reverse order. That way we can just `pop`.
   var tokens = tokens.reversed()
+  result = newOrgArray()
   while tokens.len > 0:
     let t = tokens.pop()
     ## XXX: concat two text nodes if they appear after another!
     result.add t.parseToken(tokens)
 
-proc parseOrg*(fname: string): OrgDocument =
+proc parseOrg*(fname: string): OrgNode =
   ## Parser an Org file from a given filename.
   result = readFile(fname).tokenize.parse
-
-iterator subsections*(org: OrgNode): OrgNode =
-  ## Yields all subsections in the given org section `org`.
-  doAssert org.kind == ogSection, "Input node is not an Org mode section, but: " & $org.kind
-  for ch in org.sec.body:
-    case ch.kind
-    of ogSection: yield ch
-    else: continue
 
 iterator body*(org: OrgNode): OrgNode =
   ## Iterates over the body of the org section
@@ -387,6 +395,19 @@ iterator body*(org: OrgNode): OrgNode =
     raise newException(ValueError, "The argument is not a section, but a " & $org.kind)
   for el in org.sec.body:
     yield el
+
+iterator subsections*(org: OrgNode): OrgNode =
+  ## Yields all subsections in the given org section `org`.
+  doAssert org.kind == ogSection, "Input node is not an Org mode section, but: " & $org.kind
+  for ch in body(org):
+    case ch.kind
+    of ogSection: yield ch
+    else: continue
+
+proc getBody*(org: OrgNode): OrgNode =
+  ## Returns the body of the given section
+  doAssert org.kind == ogSection, "Input node is not an Org mode section, but: " & $org.kind
+  result = org.sec.body
 
 proc propertyList*(org: OrgNode): PropertyList =
   ## Returns the property list of the given section, if any.
@@ -400,7 +421,7 @@ proc getProperty*(x: PropertyList, key: string): Option[Property] =
   for el in x:
     if el.key == key: return some(el)
 
-proc findSection*(org: OrgDocument, sec: string): OrgNode =
+proc findSection*(org: OrgNode, sec: string): OrgNode =
   ## Returns the section with name `sec` or `:CUSTOM_ID: sec`.
   ## A custom ID always matches at higher priority. If you have multiple
   ## ids / titles with the same name, we return the first (that is not

@@ -344,6 +344,14 @@ proc parse*(tokens: seq[Token]): seq[OrgNode] =
     ## XXX: concat two text nodes if they appear after another!
     result.add t.parseToken(tokens)
 
+iterator subsections*(org: OrgNode): OrgNode =
+  ## Yields all subsections in the given org section `org`.
+  doAssert org.kind == ogSection, "Input node is not an Org mode section, but: " & $org.kind
+  for ch in org.sec.body:
+    case ch.kind
+    of ogSection: yield ch
+    else: continue
+
 when isMainModule:
   const path = "/home/basti/org/Documents/CV_data.org"
   let data = readFile(path)

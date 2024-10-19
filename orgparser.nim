@@ -359,7 +359,6 @@ proc parseOperatorOrSection(t: Token, tokens: var seq[Token]): OrgNode =
   else: # should be a section
     var body = newOrgArray()
     let title = parseTitle(tn, tokens)
-    writeStackTrace()
     while tokens.len > 0:
       if sectionUpcoming(tokens):
         let nextLevel = determineSectionLevel(tokens)
@@ -412,9 +411,12 @@ iterator subsections*(org: OrgNode): OrgNode =
     else: continue
 
 proc getBody*(org: OrgNode): OrgNode =
-  ## Returns the body of the given section
+  ## Returns the body of the given section without any property list
   doAssert org.kind == ogSection, "Input node is not an Org mode section, but: " & $org.kind
-  result = org.sec.body
+  result = newOrgArray()
+  for el in body(org):
+    if el.kind == ogPropertyList: continue
+    result.add el
 
 proc propertyList*(org: OrgNode): PropertyList =
   ## Returns the property list of the given section, if any.

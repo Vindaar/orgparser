@@ -333,8 +333,6 @@ proc determineSectionLevel(tokens: seq[Token], t = Token(kind: tkNone)): int =
   while i > 0 and tokens[i].kind == tkStar:
     inc result
     dec i
-  echo "Result for: ", result
-  printTokens(tokens, 5)
 
 proc parseTitle(t: Token, tokens: var seq[Token]): OrgNode =
   ## Parses a title from a section. Must only be called if `t` is not an

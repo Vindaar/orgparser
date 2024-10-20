@@ -255,8 +255,8 @@ proc tryParseProperty(t: Token, tokens: var seq[Token]): OrgNode =
       tok = tokens.pop()
       val.addMaybeStrip(tok, tokens, first)
     result = OrgNode(kind: ogProperty, prop: Property(key: key, value: val))
-  else: # neither, just a colon
-    result = OrgNode(kind: ogText, text: $t & key)
+  else: # neither, just a colon. Is included in `key`, so drop `t`
+    result = OrgNode(kind: ogText, text: key)
 
 proc tryParseLink(t: Token, tokens: var seq[Token]): (bool, string) =
   ## Separte from `tryParseOperator`, because the arguments of

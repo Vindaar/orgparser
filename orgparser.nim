@@ -85,20 +85,30 @@ iterator items*(org: OrgNode): OrgNode =
 proc tokenize*(org: string): seq[Token] =
   var i = 0
   var lastWasOp = false
-  var line, col = 1
+  var line, col = 1 ## NOTE: The column and line counters start at 1!
   template addToken(tk): untyped =
-    if buf.len > 0:
-      result.add Token(kind: tkText, value: buf, line: line, column: col)
-      buf.setLen(0)
-      doAssert identBuf.len == 0, "Ident buffer not empty! `" & $identBuf & "`"
-    elif identBuf.len > 0: # found identifier between two operators
-      result.add Token(kind: tkIdent, value: identBuf, line: line, column: col)
-      identBuf.setLen(0)
-      doAssert buf.len == 0, "Buffer was not empty! " & $buf
-    result.add Token(kind: tk, line: line, column: col)
-    lastWasOp = true
+    if not inComment:
+      if buf.len > 0:
+        result.add Token(kind: tkText, value: buf, line: line, column: col)
+        buf.setLen(0)
+        doAssert identBuf.len == 0, "Ident buffer not empty! `" & $identBuf & "`"
+      elif identBuf.len > 0: # found identifier between two operators
+        result.add Token(kind: tkIdent, value: identBuf, line: line, column: col)
+        identBuf.setLen(0)
+        doAssert buf.len == 0, "Buffer was not empty! " & $buf
+      result.add Token(kind: tk, line: line, column: col)
+      lastWasOp = true
+
+  template addChar(): untyped =
+    if not inComment:
+      if lastWasOp:
+        identBuf.add org[i]
+      else:
+        buf.add org[i]
+
   var buf = newStringOfCap(128_000)
   var identBuf = newStringOfCap(512)
+  var inComment = false
   while i < org.len:
     case org[i]
     of '*':  addToken tkStar
@@ -107,24 +117,29 @@ proc tokenize*(org: string): seq[Token] =
     of '=':  addToken tkEqual
     of '~':  addToken tkTilde
     of ':':  addToken tkColon
+    of '#':
+      if col == 1: inComment = true
+      else: addChar()
+    of '+':
+      if col == 2: inComment = false
+      else: addChar()
     of '_':
-      if identBuf.len > 0 and i < org.len - 1 and org[i+1] notin {'*','[',']','=','~',':',' ','\n'}:
-        # just a regular underscore in an identifier, e.g. `CUSTOM_ID`
-        identBuf.add org[i]
-      else:
-        addToken tkUnderscore
-    of '\n': addToken tkNewline; inc line; col = 0
+      if not inComment:
+        if identBuf.len > 0 and i < org.len - 1 and org[i+1] notin {'*','[',']','=','~',':',' ','\n'}:
+          # just a regular underscore in an identifier, e.g. `CUSTOM_ID`
+          identBuf.add org[i]
+        else:
+          addToken tkUnderscore
+    of '\n': addToken tkNewline; inc line; col = 0; inComment = false
     of ' ':
-      if identBuf.len > 0: # not an identifier after all, add to buf, reset
-        buf.add identBuf
-        identBuf.setLen(0)
-      buf.add org[i]
-      lastWasOp = false
-    else:
-      if lastWasOp:
-        identBuf.add org[i]
-      else:
+      if not inComment:
+        if identBuf.len > 0: # not an identifier after all, add to buf, reset
+          buf.add identBuf
+          identBuf.setLen(0)
         buf.add org[i]
+        lastWasOp = false
+    else:
+      addChar()
     inc i
     inc col
 

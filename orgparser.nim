@@ -447,6 +447,11 @@ iterator subsections*(org: OrgNode): OrgNode =
     of ogSection: yield ch
     else: continue
 
+proc getTitle*(org: OrgNode): OrgNode =
+  ## Returns the title of the given section
+  doAssert org.kind == ogSection, "Input node is not an Org mode section, but: " & $org.kind
+  result = org.sec.title
+
 proc getBody*(org: OrgNode): OrgNode =
   ## Returns the body of the given section without any property list
   doAssert org.kind == ogSection, "Input node is not an Org mode section, but: " & $org.kind
@@ -454,6 +459,16 @@ proc getBody*(org: OrgNode): OrgNode =
   for el in body(org):
     if el.kind == ogPropertyList: continue
     result.add el
+
+proc getBodyText*(org: OrgNode): OrgNode =
+  ## Returns the body of the given section without any property list *or* any subsections.
+  doAssert org.kind == ogSection, "Input node is not an Org mode section, but: " & $org.kind
+  result = newOrgArray()
+  for el in body(org):
+    if el.kind == ogPropertyList: continue
+    if el.kind == ogSection: break # done. Cannot be anything after first subsection
+    result.add el
+
 
 proc propertyList*(org: OrgNode): PropertyList =
   ## Returns the property list of the given section, if any.
@@ -490,6 +505,11 @@ proc findSection*(org: OrgNode, sec: string): OrgNode =
     if el.kind == ogSection:
       let s = findSecImpl(el)
       if s.kind == ogSection: return s
+
+proc hasTag*(org: OrgNode, tag: string): bool =
+  ## Returns `true` if the given Org section has the given `tag`.
+  doAssert org.kind == ogSection, "Input node is not an Org mode section, but: " & $org.kind
+  result = tag in org.sec.tags
 
 when isMainModule:
   const path = "/home/basti/org/Documents/CV_data.org"

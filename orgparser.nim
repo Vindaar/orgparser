@@ -65,6 +65,7 @@ type
 
   Section* = object
     title*: OrgNode
+    tags*: seq[string] # All tags on the section title
     level*: int # The section level (number of `*`)
     body*: OrgNode
 
@@ -185,6 +186,10 @@ proc `$`*(pList: PropertyList): string =
     result.add $p & "\n"
   result.add ":END:\n"
 
+proc tagsAsString(s: seq[string]): string =
+  ## Given a seq of tags, returns them as an Org tag string
+  result = ":" & s.join(":") & ":"
+
 proc serialize(org: OrgNode): string =
   if org.isNil: return "OrgNode(nil)"
   case org.kind
@@ -193,7 +198,7 @@ proc serialize(org: OrgNode): string =
       result.add serialize(x)
   of ogSection:
     result = repeat('*', org.sec.level) & " "
-    result.add $org.sec.title & "\n"
+    result.add $org.sec.title & repeat(' ', 20) & tagsAsString(org.sec.tags) & "\n"
     result.add $org.sec.body
   of ogProperty:      result = $org.prop
   of ogPropertyStart: result = ":PROPERTIES:"
@@ -349,20 +354,39 @@ proc determineSectionLevel(tokens: seq[Token], t = Token(kind: tkNone)): int =
     inc result
     dec i
 
-proc parseTitle(t: Token, tokens: var seq[Token]): OrgNode =
+proc parseTitle(t: Token, tokens: var seq[Token]): (OrgNode, seq[string]) =
   ## Parses a title from a section. Must only be called if `t` is not an
   ## ident and the previous token is a `tkStar`.
   doAssert t.kind != tkIdent, "Ident cannot be valid title" & $t
-  if t.kind == tkNewline: return newOrgEmpty()
+  if t.kind == tkNewline: return (newOrgEmpty(), @[])
   else:
-    result = newOrgArray()
+    result[0] = newOrgArray()
     var tok: Token
     var first = true # to strip the first space after `*`
+    var tags: seq[string]
     while tokens.len > 0 and tok.kind != tkNewline: # every token to next newline is part of the title
       tok = tokens.pop()
-      if tok.kind == tkStar: continue # skip, already taken into account by `determineSectionLevel`
-      var node = tok.parseToken(tokens)
-      result.addMaybeStrip(tok, tokens, first)
+      case tok.kind
+      of tkStar: continue # skip, already taken into account by `determineSectionLevel`
+      of tkColon: # maybe found a tag!
+        case tokens.tryPeek().kind
+        of tkIdent: # probably a tag
+          let tag = tokens.pop() # get the likely tag
+          if tokens.tryPeek().kind != tkColon: # must end with colon, not a tag after all
+            var nodeTok = tok.parseToken(tokens)
+            var nodeTag = tag.parseToken(tokens)
+            result[0].add nodeTok # add to title itself
+            result[0].add nodeTag
+          else: # is indeed a tag
+            tags.add $tag.parseToken(tokens)
+        of tkNewline: # was the last tag, ignore newline
+          continue
+        else:
+          raiseAssert "Invalid token for title: " & $t & " at line: " & $t.line & ", col: " & $t.column
+      else:
+        var node = tok.parseToken(tokens)
+        result[0].addMaybeStrip(tok, tokens, first)
+    result[1] = tags
 
 proc parseOperatorOrSection(t: Token, tokens: var seq[Token]): OrgNode =
   let level = determineSectionLevel(tokens, t)
@@ -371,7 +395,7 @@ proc parseOperatorOrSection(t: Token, tokens: var seq[Token]): OrgNode =
     result = tryParseOperator(t, tokens, tkStar, ogBold)
   else: # should be a section
     var body = newOrgArray()
-    let title = parseTitle(tn, tokens)
+    let (title, tags) = parseTitle(tn, tokens)
     while tokens.len > 0:
       if sectionUpcoming(tokens):
         let nextLevel = determineSectionLevel(tokens)
@@ -379,7 +403,7 @@ proc parseOperatorOrSection(t: Token, tokens: var seq[Token]): OrgNode =
           break # exit if we've reached a section of the same or higher level
       let tn = tokens.pop()
       body.add tn.parseToken(tokens)
-    result = OrgNode(kind: ogSection, sec: Section(title: title, level: level, body: body))
+    result = OrgNode(kind: ogSection, sec: Section(title: title, tags: tags, level: level, body: body))
 
 proc parseToken*(token: Token, tokens: var seq[Token]): OrgNode =
   case token.kind
